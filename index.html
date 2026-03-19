@@ -18,32 +18,14 @@ input { width: 90px; }
 
 <table id="elemTable">
 <thead>
-<tr>
-  <th>元素</th>
-  <th>atomic%</th>
-</tr>
+<tr><th>元素</th><th>atomic%</th></tr>
 </thead>
 <tbody>
-<tr>
-  <td><input placeholder="C" /></td>
-  <td><input placeholder="74.38" /></td>
-</tr>
-<tr>
-  <td><input placeholder="N" /></td>
-  <td><input placeholder="8.22" /></td>
-</tr>
-<tr>
-  <td><input placeholder="O" /></td>
-  <td><input placeholder="15.48" /></td>
-</tr>
-<tr>
-  <td><input placeholder="Pd" /></td>
-  <td><input placeholder="1.29" /></td>
-</tr>
-<tr>
-  <td><input placeholder="F" /></td>
-  <td><input placeholder="0.63" /></td>
-</tr>
+<tr><td><input placeholder="C" /></td><td><input placeholder="74.38" /></td></tr>
+<tr><td><input placeholder="N" /></td><td><input placeholder="8.22" /></td></tr>
+<tr><td><input placeholder="O" /></td><td><input placeholder="15.48" /></td></tr>
+<tr><td><input placeholder="Pd" /></td><td><input placeholder="1.29" /></td></tr>
+<tr><td><input placeholder="F" /></td><td><input placeholder="0.63" /></td></tr>
 </tbody>
 </table>
 
@@ -52,15 +34,19 @@ input { width: 90px; }
 <label>試料質量 (mg)：<input id="sampleMass" type="number" value="10"></label><br><br>
 
 <button onclick="calculate()">計算する</button>
+<button onclick="downloadCSV()">CSV ダウンロード</button>
+<button onclick="downloadExcel()">Excel ダウンロード（.xlsx）</button>
 
 <h3>結果</h3>
 <pre id="result"></pre>
 
-<script>
-// --- 全元素の原子量テーブル（1〜118） ---
-const atomicWeights = {
- H:1.008, He:4.0026,
- Li:6.94, Be:9.0122, B:10.81, C:12.011, N:14.007, O:15.999, F:18.998, Ne:20.180,
+<script type="module">
+
+/* ===========================
+   atomicWeights.js モジュール
+   =========================== */
+export const atomicWeights = {
+ H:1.008, He:4.0026, Li:6.94, Be:9.0122, B:10.81, C:12.011, N:14.007, O:15.999, F:18.998, Ne:20.180,
  Na:22.990, Mg:24.305, Al:26.982, Si:28.085, P:30.974, S:32.06, Cl:35.45, Ar:39.948,
  K:39.098, Ca:40.078, Sc:44.956, Ti:47.867, V:50.942, Cr:51.996, Mn:54.938, Fe:55.845,
  Co:58.933, Ni:58.693, Cu:63.546, Zn:65.38, Ga:69.723, Ge:72.630, As:74.922, Se:78.971,
@@ -79,56 +65,110 @@ const atomicWeights = {
  Mt:278, Ds:281, Rg:282, Cn:285, Nh:286, Fl:289, Mc:290, Lv:293, Ts:294, Og:294
 };
 
-function addRow() {
-  const table = document.querySelector("#elemTable tbody");
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td><input placeholder="Element" /></td>
-    <td><input placeholder="0.0" /></td>
-  `;
-  table.appendChild(tr);
-}
-
-function calculate() {
-  const rows = document.querySelectorAll("#elemTable tbody tr");
-  let comps = [];
-  rows.forEach(r => {
-    const elem = r.children[0].querySelector("input").value.trim();
-    const atp  = parseFloat(r.children[1].querySelector("input").value);
-    if (elem && !isNaN(atp)) comps.push({element: elem, atomic: atp});
-  });
+/* ===========================
+   logic.js モジュール
+   =========================== */
+export function computeResults(comps, sampleMass, atomicWeights) {
+  let sumAtomic = comps.reduce((s,c)=>s+c.atomic,0);
+  if (Math.abs(sumAtomic - 100) > 0.01) {
+    throw new Error(`atomic% の合計が 100% ではありません（現在 ${sumAtomic.toFixed(4)}%）`);
+  }
 
   let totalMass = 0;
   let partial = [];
 
-  // atomic% → 質量寄与
   for (let c of comps) {
     const aw = atomicWeights[c.element];
-    if (!aw) {
-      alert(`原子量テーブルに存在しない元素：${c.element}`);
-      return;
-    }
+    if (!aw) throw new Error(`未知の元素：${c.element}`);
     const w = (c.atomic/100) * aw;
     partial.push({...c, aw:aw, weight:w});
     totalMass += w;
   }
 
-  // 出力
-  let out = "";
-  const sampleMass = parseFloat(document.getElementById("sampleMass").value);
-
-  partial.forEach(p => {
+  let results = partial.map(p => {
     const wt = (p.weight / totalMass) * 100;
     const mg = sampleMass * (wt/100);
     const mol = (mg/1000) / p.aw;
-    out += `${p.element}:\n`;
-    out += `  wt% = ${wt.toFixed(4)}\n`;
-    out += `  in ${sampleMass} mg → ${mg.toFixed(4)} mg\n`;
-    out += `  mol = ${mol.toExponential(6)} mol\n\n`;
+    return {element:p.element, wt, mg, mol};
   });
 
-  document.getElementById("result").textContent = out;
+  return results;
 }
+
+/* ===========================
+   ui.js メイン処理
+   =========================== */
+import {atomicWeights as AW} from "./index.html";
+import {computeResults} from "./index.html";
+
+window.addRow = function() {
+  const table = document.querySelector("#elemTable tbody");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><input placeholder="Element" /></td>
+                  <td><input placeholder="0.0" /></td>`;
+  table.appendChild(tr);
+};
+
+window.calculate = function() {
+  try {
+    const rows = document.querySelectorAll("#elemTable tbody tr");
+    let comps = [];
+    rows.forEach(r => {
+      const elem = r.children[0].querySelector("input").value.trim();
+      const atp  = parseFloat(r.children[1].querySelector("input").value);
+      if (elem && !isNaN(atp)) comps.push({element:elem, atomic:atp});
+    });
+
+    const sampleMass = parseFloat(document.getElementById("sampleMass").value);
+
+    const results = computeResults(comps, sampleMass, AW);
+
+    let out = "";
+    results.forEach(r => {
+      out += `${r.element}:\n`;
+      out += `  wt% = ${r.wt.toFixed(4)}\n`;
+      out += `  in ${sampleMass} mg → ${r.mg.toFixed(4)} mg\n`;
+      out += `  mol = ${r.mol.toExponential(6)} mol\n\n`;
+    });
+
+    document.getElementById("result").textContent = out;
+
+    window._lastResults = results;  // CSV/Excel 出力用
+
+  } catch(e) { alert(e.message); }
+};
+
+window.downloadCSV = function() {
+  if (!window._lastResults) return alert("先に計算してください");
+
+  let csv = "Element,wt%,mg,mol\n";
+  window._lastResults.forEach(r=>{
+    csv += `${r.element},${r.wt},${r.mg},${r.mol}\n`;
+  });
+
+  const blob = new Blob([csv], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "xps_result.csv";
+  a.click();
+};
+
+window.downloadExcel = function() {
+  if (!window._lastResults) return alert("先に計算してください");
+
+  // Excel は CSV を .xlsx 拡張子で読んでくれる
+  let csv = "Element,wt%,mg,mol\n";
+  window._lastResults.forEach(r=>{
+    csv += `${r.element},${r.wt},${r.mg},${r.mol}\n`;
+  });
+
+  const blob = new Blob([csv], {type:"application/vnd.ms-excel"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "xps_result.xlsx";
+  a.click();
+};
+
 </script>
 
 </body>
